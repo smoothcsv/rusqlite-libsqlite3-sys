@@ -97035,9 +97035,10 @@ case OP_Ge: {             /* same as TK_GE, jump, in1, in3 */
           ** can sit after OP_Lt / OP_Gt). It must reflect "operands are
           ** not equal" for NaN so ElseEq takes its FALSE arm — JS NaN
           ** equality is false. Any non-zero value works; +1 mirrors the
-          ** existing `iCompare = 1; /* Operands are not equal */` set
-          ** further down the handler when applyAffinity decides one side
-          ** is numeric and the other is not (see line ~97102). */
+          ** `iCompare = 1` setpoint further down the handler when
+          ** applyAffinity decides one side is numeric and the other is
+          ** not (search the same case block for the comment "Operands
+          ** are not equal"). */
           res2 = (pOp->opcode == OP_Ne);
           iCompare = 1;
           VVA_ONLY( iCompareIsInit = 1; )
