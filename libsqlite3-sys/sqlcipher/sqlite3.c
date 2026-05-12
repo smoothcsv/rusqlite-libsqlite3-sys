@@ -97004,18 +97004,6 @@ case OP_Ge: {             /* same as TK_GE, jump, in1, in3 */
         /* Blob comparison not covered by the spec; fall through. */
         goto sc_jscompat_fallthrough;
       }
-      /* SCAFFOLD GUARD (issue #191 Step B): until scStrCmpJsLike and
-      ** scJsToNumber's string path are implemented, any operand
-      ** classified as STR must fall through to the legacy
-      ** applyAffinity + sqlite3MemCompare path. Without this guard the
-      ** stub `scStrCmpJsLike` returns 0 (equal) for every string
-      ** comparison, which breaks internal schema lookups that rely on
-      ** OP_Eq on strings (manifest as "database disk image is malformed"
-      ** on CREATE TABLE). Remove this guard once both helpers are
-      ** implemented. */
-      if( t1 == SC_K_STR || t3 == SC_K_STR ){
-        goto sc_jscompat_fallthrough;
-      }
       if( t1 == SC_K_STR && t3 == SC_K_STR ){
         /* String × String: UTF-16 code-unit lex compare,
         ** non-destructive. Argument order matches the SQL operand
