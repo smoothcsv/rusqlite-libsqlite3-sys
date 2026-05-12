@@ -95536,6 +95536,12 @@ static const char *vdbeMemTypeName(Mem *pMem){
   return azTypes[sqlite3_value_type(pMem)-1];
 }
 
+/* SmoothCSV JS-compat helpers (scJsKind, ScCpReader, scStrCmpJsLike,
+** scJsToNumber). Pulled in as static functions at this point so the
+** OP_Eq..OP_Ge dispatch site below can reach them. See
+** src/sqlcompat.c and issues/open/191-plan.md (Step B) for design. */
+#include "../src/sqlcompat.c"
+
 /*
 ** Execute as much of a VDBE program as we can.
 ** This is the core of sqlite3_step().
@@ -96979,6 +96985,69 @@ case OP_Ge: {             /* same as TK_GE, jump, in1, in3 */
   pIn3 = &aMem[pOp->p3];
   flags1 = pIn1->flags;
   flags3 = pIn3->flags;
+  /* SmoothCSV JS-compat dispatch */
+  {
+    /* IS / IS NOT lowers to OP_Eq / OP_Ne with SQLITE_NULLEQ set.
+    ** Those are SQL identity, not JS loose equality. Fall through. */
+    if( pOp->p5 & SQLITE_NULLEQ ){
+      goto sc_jscompat_fallthrough;
+    }
+    /* NULL operands: SQL 3VL already matches our spec
+    ** ("either side Null → result is Null"). Fall through. */
+    if( (flags1 | flags3) & MEM_Null ){
+      goto sc_jscompat_fallthrough;
+    }
+    {
+      int t1 = scJsKind(pIn1);
+      int t3 = scJsKind(pIn3);
+      if( t1 == SC_K_BLOB || t3 == SC_K_BLOB ){
+        /* Blob comparison not covered by the spec; fall through. */
+        goto sc_jscompat_fallthrough;
+      }
+      /* SCAFFOLD GUARD (issue #191 Step B): until scStrCmpJsLike and
+      ** scJsToNumber's string path are implemented, any operand
+      ** classified as STR must fall through to the legacy
+      ** applyAffinity + sqlite3MemCompare path. Without this guard the
+      ** stub `scStrCmpJsLike` returns 0 (equal) for every string
+      ** comparison, which breaks internal schema lookups that rely on
+      ** OP_Eq on strings (manifest as "database disk image is malformed"
+      ** on CREATE TABLE). Remove this guard once both helpers are
+      ** implemented. */
+      if( t1 == SC_K_STR || t3 == SC_K_STR ){
+        goto sc_jscompat_fallthrough;
+      }
+      if( t1 == SC_K_STR && t3 == SC_K_STR ){
+        /* String × String: UTF-16 code-unit lex compare,
+        ** non-destructive. Argument order matches the SQL operand
+        ** order (left = pIn3, right = pIn1) so res < 0 ⇒ left < right. */
+        res = scStrCmpJsLike(pIn3, pIn1);
+      }else{
+        /* Any numeric operand pair: ECMA-262 Number() coercion. */
+        double n1, n3;
+        int ok1 = scJsToNumber(pIn1, &n1);
+        int ok3 = scJsToNumber(pIn3, &n3);
+        if( !ok1 || !ok3 ){
+          /* NaN: all relational comparisons + Eq are false; Ne is
+          ** true. Set res2 / iCompare explicitly and jump past the
+          ** legacy res→res2 mapping so iCompare = res does not
+          ** overwrite our explicit iCompare = 1 with uninitialized
+          ** res. */
+          res2 = (pOp->opcode == OP_Ne);
+          iCompare = 1;
+          VVA_ONLY( iCompareIsInit = 1; )
+          goto sc_jscompat_after_iCompare;
+        }
+        if( n3 < n1 )       res = -1;
+        else if( n3 > n1 )  res = +1;
+        else                res = 0;
+      }
+    }
+    /* Reuse the legacy tail's res → res2 mapping and flag restore.
+    ** We did NOT mutate pIn1 / pIn3, so the trailing
+    ** `pIn3->flags = flags3; pIn1->flags = flags1;` is a no-op. */
+    goto sc_jscompat_map_res_to_res2;
+  }
+sc_jscompat_fallthrough:
   if( (flags1 & flags3 & MEM_Int)!=0 ){
     /* Common case of comparison of two integers */
     if( pIn3->u.i > pIn1->u.i ){
@@ -97086,6 +97155,7 @@ case OP_Ge: {             /* same as TK_GE, jump, in1, in3 */
   ** order:  NE, EQ, GT, LE, LT, GE */
   assert( OP_Eq==OP_Ne+1 ); assert( OP_Gt==OP_Ne+2 ); assert( OP_Le==OP_Ne+3 );
   assert( OP_Lt==OP_Ne+4 ); assert( OP_Ge==OP_Ne+5 );
+sc_jscompat_map_res_to_res2:
   if( res<0 ){
     res2 = sqlite3aLTb[pOp->opcode];
   }else if( res==0 ){
@@ -97095,6 +97165,7 @@ case OP_Ge: {             /* same as TK_GE, jump, in1, in3 */
   }
   iCompare = res;
   VVA_ONLY( iCompareIsInit = 1; )
+sc_jscompat_after_iCompare:
 
   /* Undo any changes made by applyAffinity() to the input registers. */
   assert( (pIn3->flags & MEM_Dyn) == (flags3 & MEM_Dyn) );

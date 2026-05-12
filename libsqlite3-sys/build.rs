@@ -119,6 +119,8 @@ mod build_bundled {
         }
         println!("cargo:include={}/{lib_name}", env!("CARGO_MANIFEST_DIR"));
         println!("cargo:rerun-if-changed={lib_name}/sqlite3.c");
+        // SmoothCSV JS-compat: helper included from sqlite3.c via #include.
+        println!("cargo:rerun-if-changed=src/sqlcompat.c");
         println!("cargo:rerun-if-changed=sqlite3/wasm32-wasi-vfs.c");
         let mut cfg = cc::Build::new();
         cfg.file(format!("{lib_name}/sqlite3.c"))
