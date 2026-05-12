@@ -97025,47 +97025,24 @@ case OP_Ge: {             /* same as TK_GE, jump, in1, in3 */
         int ok1 = scJsToNumber(pIn1, &n1);
         int ok3 = scJsToNumber(pIn3, &n3);
         if( !ok1 || !ok3 ){
-          /* NaN handling under SQLite-emitted bytecode.
+          /* NaN: all relational comparisons + Eq are false; Ne is
+          ** true. Set res2 / iCompare explicitly and jump past the
+          ** legacy res→res2 mapping so iCompare = res does not
+          ** overwrite our explicit iCompare = 1 with uninitialized
+          ** res.
           **
-          ** Equality (OP_Eq / OP_Ne): NaN == X is false, NaN != X is
-          ** true. The compiler never inverts equality for WHERE — both
-          ** `WHERE col = X` and `WHERE col != X` route through the
-          ** same opcode flavor with appropriate take/skip targets, so
-          ** `res2 = (opcode == OP_Ne)` is correct in WHERE and
-          ** produces the right 0/1 result downstream in SELECT.
-          **
-          ** Order ops (OP_Gt / OP_Le / OP_Lt / OP_Ge): NaN ordered
-          ** against anything is false in JS. But SQLite's WHERE
-          ** compiler INVERTS these — `WHERE col > 5` lowers to
-          ** `Le(col, 5); skip-if-true` with SQLITE_JUMPIFNULL set.
-          ** Returning res2=0 (Le-false) on NaN would not skip the
-          ** row, incorrectly including it. Routing through the
-          ** NULL-result branch fires JUMPIFNULL in WHERE (correct
-          ** skip); in SELECT the trailing OP_ZeroOrNull writes 0
-          ** because the input registers are non-NULL — same
-          ** user-visible 0 the spec documents.
-          **
-          ** OP_ElseEq consumes iCompare; iCompare = 1 ("operands not
-          ** equal") makes ElseEq take its FALSE arm, matching JS NaN
-          ** equality being false. */
-          if( pOp->opcode==OP_Eq || pOp->opcode==OP_Ne ){
-            res2 = (pOp->opcode == OP_Ne);
-            iCompare = 1;
-            VVA_ONLY( iCompareIsInit = 1; )
-            goto sc_jscompat_after_iCompare;
-          }
-          /* Order ops: mirror the legacy NULL-result branch below
-          ** (`SQLITE_NULLEQ is clear and at least one operand is
-          ** NULL`). flags1/flags3 are unchanged because scJsToNumber
-          ** does not mutate its argument, so no flag restoration is
-          ** required before `break`. */
-          VdbeBranchTaken(2,3);
-          if( pOp->p5 & SQLITE_JUMPIFNULL ){
-            goto jump_to_p2;
-          }
+          ** `iCompare` is consumed by OP_ElseEq (a follow-up opcode that
+          ** can sit after OP_Lt / OP_Gt). It must reflect "operands are
+          ** not equal" for NaN so ElseEq takes its FALSE arm — JS NaN
+          ** equality is false. Any non-zero value works; +1 mirrors the
+          ** `iCompare = 1` setpoint further down the handler when
+          ** applyAffinity decides one side is numeric and the other is
+          ** not (search the same case block for the comment "Operands
+          ** are not equal"). */
+          res2 = (pOp->opcode == OP_Ne);
           iCompare = 1;
           VVA_ONLY( iCompareIsInit = 1; )
-          break;
+          goto sc_jscompat_after_iCompare;
         }
         if( n3 < n1 )       res = -1;
         else if( n3 > n1 )  res = +1;
