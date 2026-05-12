@@ -95539,7 +95539,17 @@ static const char *vdbeMemTypeName(Mem *pMem){
 /* SmoothCSV JS-compat helpers (scJsKind, ScCpReader, scStrCmpJsLike,
 ** scJsToNumber). Pulled in as static functions at this point so the
 ** OP_Eq..OP_Ge dispatch site below can reach them. See
-** src/sqlcompat.c and issues/open/191-plan.md (Step B) for design. */
+** src/sqlcompat.c and issues/open/191-plan.md (Step B) for design.
+**
+** Included via `#include` (not compiled as a separate translation unit
+** via `cc::Build::file()`) so the helpers can see VDBE-internal types
+** (`Mem`, `u8`, `u32`, `SQLITE_UTF8`, the `MEM_*` flags, etc.) that are
+** not exposed via the public sqlite3.h. The compiler's `-I` setup is
+** irrelevant because `#include "..."` resolves the path relative to
+** *this* source file (`libsqlite3-sys/sqlcipher/sqlite3.c`), so
+** `"../src/sqlcompat.c"` lands on `libsqlite3-sys/src/sqlcompat.c`.
+** `build.rs` declares `cargo:rerun-if-changed=src/sqlcompat.c` so edits
+** to the helper retrigger the amalgamation rebuild. */
 #include "../src/sqlcompat.c"
 
 /*
@@ -97019,7 +97029,15 @@ case OP_Ge: {             /* same as TK_GE, jump, in1, in3 */
           ** true. Set res2 / iCompare explicitly and jump past the
           ** legacy res→res2 mapping so iCompare = res does not
           ** overwrite our explicit iCompare = 1 with uninitialized
-          ** res. */
+          ** res.
+          **
+          ** `iCompare` is consumed by OP_ElseEq (a follow-up opcode that
+          ** can sit after OP_Lt / OP_Gt). It must reflect "operands are
+          ** not equal" for NaN so ElseEq takes its FALSE arm — JS NaN
+          ** equality is false. Any non-zero value works; +1 mirrors the
+          ** existing `iCompare = 1; /* Operands are not equal */` set
+          ** further down the handler when applyAffinity decides one side
+          ** is numeric and the other is not (see line ~97102). */
           res2 = (pOp->opcode == OP_Ne);
           iCompare = 1;
           VVA_ONLY( iCompareIsInit = 1; )
